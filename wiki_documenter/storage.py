@@ -123,7 +123,7 @@ class WikiStorage:
         for p in pages:
             # Use filename only — Obsidian resolves wikilinks by filename across the vault
             filename = p["page"].split("/")[-1]
-            page_link = f"[[{filename}|{p['title']}]]"
+            page_link = f"[[{filename}\\|{p['title']}]]"
             source_link = f"[{source_title}]({source_url})" if source_url else source_title
             lines.append(f"| {today} | {page_link} | {p['action']} | {source_link} |\n")
 
