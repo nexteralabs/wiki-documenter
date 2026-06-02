@@ -13,60 +13,30 @@ _TODAY = date.today().isoformat()
 
 
 class WikiDocumenter:
-    """Document tech articles and research topics into an Obsidian wiki vault."""
+    """
+    Document tech articles and research topics into an Obsidian wiki vault.
 
-    def __init__(self, wiki_root: Path, llm_fn: Callable[[str], Awaitable[str]]):
+    llm_fn must be an async callable: (prompt: str) -> tuple[str, int]
+    returning (response_text, tokens_used).  Pass tokens_used=0 if unknown.
+    """
+
+    def __init__(self, wiki_root: Path, llm_fn: Callable[[str], Awaitable[tuple[str, int]]]):
         self.storage = WikiStorage(wiki_root)
         self.fetcher = ArticleFetcher()
         self.llm_fn = llm_fn
 
     async def document(self, url: str, title: str) -> dict:
-        """
-        Fetch a URL, identify all distinct topics, and write/enhance one wiki
-        page per topic.  Returns a dict with the list of pages written.
-        """
+        """Fetch URL, identify topics, write/enhance one wiki page per topic."""
         content = await self.fetcher.fetch(url)
-        raw_slug = _slugify(title)
-        self.storage.save_raw(raw_slug, content)
-
-        # Step 1 — identify topics covered by this article
-        topics = await self._identify_topics(title, content)
-
-        # Step 2 — write/enhance one wiki page per topic
-        pages = []
-        for topic in topics:
-            existing = self.storage.read_page(topic["slug"])
-            prompt = _build_topic_page_prompt(
-                topic_title=topic["title"],
-                topic_slug=topic["slug"],
-                topic_type=topic["type"],
-                article_title=title,
-                article_url=url,
-                article_content=content,
-                existing=existing,
-            )
-            wiki_markdown = await self.llm_fn(prompt)
-            path = self.storage.write_page(topic["slug"], wiki_markdown)
-            action = "enhanced" if existing else "created"
-            pages.append({
-                "page": topic["slug"],
-                "title": topic["title"],
-                "type": topic["type"],
-                "action": action,
-                "path": str(path),
-            })
-
-        # Step 3 — update new-content log
-        self.storage.append_new_content(title, url, pages)
-
-        return {"pages": pages, "raw": raw_slug, "source_title": title, "source_url": url}
+        return await self.document_with_content(url, title, content)
 
     async def document_with_content(self, url: str, title: str, content: str) -> dict:
         """Same as document() but with pre-fetched content — skips the HTTP fetch."""
         raw_slug = _slugify(title)
         self.storage.save_raw(raw_slug, content)
 
-        topics = await self._identify_topics(title, content)
+        topics, tokens_topics = await self._identify_topics(title, content)
+        total_tokens = tokens_topics
 
         pages = []
         for topic in topics:
@@ -80,7 +50,8 @@ class WikiDocumenter:
                 article_content=content,
                 existing=existing,
             )
-            wiki_markdown = await self.llm_fn(prompt)
+            wiki_markdown, tokens = await self.llm_fn(prompt)
+            total_tokens += tokens
             path = self.storage.write_page(topic["slug"], wiki_markdown)
             action = "enhanced" if existing else "created"
             pages.append({
@@ -92,31 +63,38 @@ class WikiDocumenter:
             })
 
         self.storage.append_new_content(title, url, pages)
-        return {"pages": pages, "raw": raw_slug, "source_title": title, "source_url": url}
+        return {
+            "pages": pages,
+            "raw": raw_slug,
+            "source_title": title,
+            "source_url": url,
+            "tokens_used": total_tokens,
+        }
 
     async def research(self, topic: str) -> dict:
         """Research a topic using LLM search grounding and write/enhance a wiki page."""
         slug = _slugify(topic)
         existing = self.storage.read_page(slug)
         prompt = _build_research_prompt(topic, existing)
-        wiki_markdown = await self.llm_fn(prompt)
+        wiki_markdown, tokens = await self.llm_fn(prompt)
         path = self.storage.write_page(slug, wiki_markdown)
         action = "enhanced" if existing else "created"
 
         pages = [{"page": slug, "title": topic, "type": "concept", "action": action, "path": str(path)}]
         self.storage.append_new_content(f"research: {topic}", "", pages)
 
-        return {"pages": pages, "source_title": topic, "source_url": ""}
+        return {"pages": pages, "source_title": topic, "source_url": "", "tokens_used": tokens}
 
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
 
-    async def _identify_topics(self, title: str, content: str) -> list[dict]:
-        """Ask the LLM to extract distinct topics from the article."""
-        prompt = _build_topics_prompt(title, content)
-        raw = await self.llm_fn(prompt)
-        return _parse_topics_json(raw)
+    async def _identify_topics(self, title: str, content: str) -> tuple[list[dict], int]:
+        """Ask the LLM to extract distinct topics. Returns (topics, tokens_used)."""
+        existing_pages = self.storage.list_pages()
+        prompt = _build_topics_prompt(title, content, existing_pages)
+        raw, tokens = await self.llm_fn(prompt)
+        return _parse_topics_json(raw), tokens
 
 
 # ---------------------------------------------------------------------------
@@ -147,32 +125,47 @@ updated: "{today}"
 """
 
 
-def _build_topics_prompt(title: str, content: str) -> str:
+def _build_topics_prompt(title: str, content: str, existing_pages: list[str]) -> str:
+    pages_list = "\n".join(f"- {p}" for p in existing_pages[:150]) if existing_pages else "(none yet)"
     return f"""\
-You are analyzing a tech article to identify all distinct topics it covers.
+You are deciding which wiki pages to create or update based on a tech article.
 
 Article title: {title}
 
-Article content (first 6000 chars):
-{content[:6000]}
+Article content (first 5000 chars):
+{content[:5000]}
 
 ---
 
-Identify every distinct topic, technique, tool, or concept this article covers.
-Each topic should be granular enough to stand alone as a wiki page.
+## Existing wiki pages (slugs):
+{pages_list}
+
+---
+
+## Your job
+
+Identify the 2–4 topics that are the MAIN subjects of this article — topics the article \
+actually teaches, explains in depth, or gives actionable guidance on.
+
+DO NOT include:
+- Topics merely mentioned in passing or as context
+- Generic/broad concepts (e.g. "AI", "machine learning", "software engineering")
+- Topics already well-covered by an existing page UNLESS this article adds significant new content
+
+If an existing page matches a topic (same or very similar slug), USE that slug so we enhance \
+it instead of creating a duplicate.
 
 Return ONLY a JSON array, no other text:
 [
   {{"slug": "technique-prompt-caching", "title": "Prompt Caching", "type": "technique"}},
-  {{"slug": "technique-semantic-caching", "title": "Semantic Caching", "type": "technique"}},
-  ...
+  {{"slug": "technique-semantic-caching", "title": "Semantic Caching", "type": "technique"}}
 ]
 
 Rules:
 - slug: lowercase, hyphen-separated, prefixed with type (tool-, technique-, concept-, compare-)
 - type: tool | technique | concept | comparison | overview
-- 3 to 8 topics max — only meaningful distinct subjects, not every passing mention
-- If a topic already has an obvious wiki slug (e.g. "technique-rag-variants"), use it
+- 2–4 topics MAX — quality over quantity
+- Prefer reusing an existing slug over creating a near-duplicate
 """
 
 
