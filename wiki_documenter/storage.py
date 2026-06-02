@@ -2,8 +2,19 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Optional
+
+
+def _strip_code_fence(content: str) -> str:
+    """Remove wrapping code fences that LLMs sometimes add around the whole page."""
+    content = content.strip()
+    # Match opening fence: ```yaml, ```markdown, ```md, or plain ```
+    content = re.sub(r"^```[a-z]*\n?", "", content)
+    # Match closing fence
+    content = re.sub(r"\n?```\s*$", "", content)
+    return content.strip()
 
 
 class WikiStorage:
@@ -19,8 +30,11 @@ class WikiStorage:
     # ------------------------------------------------------------------
 
     def _safe_path(self, base: Path, name: str) -> Path:
-        """Resolve name to a path under base, blocking directory traversal."""
-        if ".." in Path(name).parts or "/" in name or "\\" in name:
+        """Resolve name to a path under base, blocking directory traversal.
+        Forward slashes are allowed for subfolder paths (e.g. 'rag/technique-chunking').
+        Only '..' traversal is blocked.
+        """
+        if ".." in Path(name).parts or "\\" in name:
             raise ValueError(f"Path traversal detected: {name!r}")
         resolved = (base / name).resolve()
         if not str(resolved).startswith(str(base.resolve())):
@@ -63,7 +77,7 @@ class WikiStorage:
         """Write (or overwrite) a wiki page under wiki_root/wiki/."""
         path = self._wiki_path(name)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
+        path.write_text(_strip_code_fence(content), encoding="utf-8")
         return path
 
     def save_raw(self, name: str, content: str) -> Path:

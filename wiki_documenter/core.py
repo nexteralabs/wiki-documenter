@@ -102,9 +102,11 @@ class WikiDocumenter:
 # ---------------------------------------------------------------------------
 
 _PAGE_FORMAT = """\
-Every wiki page MUST follow this exact structure:
+CRITICAL: Output raw markdown ONLY. Do NOT wrap anything in code fences (``` or ~~~). \
+Do NOT add ```yaml or ```markdown anywhere. The output is written directly to a .md file.
 
-```
+Every wiki page MUST start with YAML frontmatter (no surrounding code fences), then two sections:
+
 ---
 title: "Human Readable Title"
 type: tool | technique | concept | comparison | overview
@@ -114,14 +116,26 @@ updated: "{today}"
 ---
 
 ## TL;DR
-[2–4 sentences. The single most useful thing to know about this topic — the takeaway a busy engineer needs in 30 seconds.]
+2–4 sentences max. The single most useful takeaway — what a busy engineer needs in 30 seconds.
 
 ## Details
-[Comprehensive technical content. Subsections as needed. Be precise: include version numbers, specifics, trade-offs, and code examples if relevant. Cross-link related topics using [[wikilink]] notation.]
+
+[Body here — see formatting rules below]
 
 ## Sources
-- [Title](url) — retrieved {today}
-```
+- [Title](https://url) — retrieved {today}
+
+---
+
+FORMATTING RULES (follow these exactly):
+- Use markdown tables for comparisons, options, or config parameters
+- Use `---` horizontal rules to separate major sections
+- Use code blocks with language tags for any code, config, or CLI commands
+- Use `- ` bullet lists (not `* `), keep them short and scannable
+- Subheadings with `###` for distinct sub-topics
+- Cross-link related wiki pages with [[wikilink]] notation
+- NO long prose paragraphs — break everything into scannable chunks
+- Be concrete: include version numbers, actual flag names, real numbers
 """
 
 
@@ -157,13 +171,16 @@ it instead of creating a duplicate.
 
 Return ONLY a JSON array, no other text:
 [
-  {{"slug": "technique-prompt-caching", "title": "Prompt Caching", "type": "technique"}},
-  {{"slug": "technique-semantic-caching", "title": "Semantic Caching", "type": "technique"}}
+  {{"slug": "rag/technique-prompt-caching", "title": "Prompt Caching", "type": "technique"}},
+  {{"slug": "rag/technique-semantic-caching", "title": "Semantic Caching", "type": "technique"}}
 ]
 
 Rules:
-- slug: lowercase, hyphen-separated, prefixed with type (tool-, technique-, concept-, compare-)
-- type: tool | technique | concept | comparison | overview
+- slug: folder/type-name — ALWAYS include a folder prefix
+- Folders: rag | agents | observability | security | containers | python | spark | d365 | confluence | controlm
+  Create a new folder name if none fit (e.g. "llm", "data", "devops")
+- type prefix: tool- | technique- | concept- | compare- | pattern- | implementation-
+- type field: tool | technique | concept | comparison | overview
 - 2–4 topics MAX — quality over quantity
 - Prefer reusing an existing slug over creating a near-duplicate
 """
