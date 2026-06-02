@@ -88,6 +88,33 @@ class WikiStorage:
         )
 
     # ------------------------------------------------------------------
+    # New-content log
+    # ------------------------------------------------------------------
+
+    def append_new_content(self, source_title: str, source_url: str, pages: list[dict]) -> None:
+        """Append a row per written page to new-content.md (creates file if missing)."""
+        from datetime import date
+        log_path = self.wiki_root / "new-content.md"
+
+        if not log_path.exists():
+            log_path.write_text(
+                "# Recent Wiki Updates\n\n"
+                "| Date | Page | Action | Source |\n"
+                "|---|---|---|---|\n",
+                encoding="utf-8",
+            )
+
+        today = date.today().isoformat()
+        lines = []
+        for p in pages:
+            page_link = f"[[wiki/{p['page']}|{p['title']}]]"
+            source_link = f"[{source_title}]({source_url})"
+            lines.append(f"| {today} | {page_link} | {p['action']} | {source_link} |\n")
+
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.writelines(lines)
+
+    # ------------------------------------------------------------------
     # Search
     # ------------------------------------------------------------------
 

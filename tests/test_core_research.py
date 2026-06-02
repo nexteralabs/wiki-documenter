@@ -3,6 +3,24 @@ from pathlib import Path
 from unittest.mock import AsyncMock
 from wiki_documenter.core import WikiDocumenter
 
+_PAGE_CONTENT = """---
+title: "GraphQL"
+type: concept
+tags: [graphql, api, query-language]
+sources: []
+updated: "2026-06-01"
+---
+
+## TL;DR
+GraphQL is a query language for APIs developed by Meta.
+
+## Details
+GraphQL allows clients to request exactly what they need.
+
+## Sources
+- https://graphql.org — retrieved 2026-06-01
+"""
+
 
 @pytest.fixture
 def wiki_root(tmp_path):
@@ -11,21 +29,7 @@ def wiki_root(tmp_path):
 
 @pytest.fixture
 def llm_fn():
-    return AsyncMock(return_value="""---
-title: "GraphQL"
-type: concept
-tags: [graphql, api, query-language]
-sources: []
-updated: "2026-06-01"
----
-
-# GraphQL
-
-GraphQL is a query language for APIs developed by Meta.
-
-## Sources
-- https://graphql.org — retrieved 2026-06-01
-""")
+    return AsyncMock(return_value=_PAGE_CONTENT)
 
 
 @pytest.fixture
@@ -34,24 +38,33 @@ def documenter(wiki_root, llm_fn):
 
 
 @pytest.mark.asyncio
-async def test_research_creates_page(documenter, wiki_root):
+async def test_research_returns_pages_list(documenter):
     result = await documenter.research("GraphQL")
 
-    assert result["action"] == "created"
-    assert result["page"] == "graphql"
+    assert "pages" in result
+    assert len(result["pages"]) == 1
+    assert result["pages"][0]["action"] == "created"
+
+
+@pytest.mark.asyncio
+async def test_research_creates_page(documenter, wiki_root):
+    await documenter.research("GraphQL")
+
     assert (wiki_root / "wiki" / "graphql.md").exists()
 
 
 @pytest.mark.asyncio
-async def test_research_enhances_existing_page(documenter, wiki_root):
+async def test_research_enhances_existing_page(wiki_root):
     wiki_dir = wiki_root / "wiki"
     wiki_dir.mkdir(parents=True, exist_ok=True)
     (wiki_dir / "graphql.md").write_text("# Existing GraphQL content\nOld info.")
 
-    result = await documenter.research("GraphQL")
+    llm_fn = AsyncMock(return_value=_PAGE_CONTENT)
+    d = WikiDocumenter(wiki_root=wiki_root, llm_fn=llm_fn)
+    result = await d.research("GraphQL")
 
-    assert result["action"] == "enhanced"
-    call_args = documenter.llm_fn.call_args[0][0]
+    assert result["pages"][0]["action"] == "enhanced"
+    call_args = llm_fn.call_args[0][0]
     assert "Existing GraphQL content" in call_args
 
 
@@ -72,10 +85,9 @@ async def test_research_prompt_instructs_web_search(documenter):
 
 
 @pytest.mark.asyncio
-async def test_research_returns_page_and_path(documenter, wiki_root):
-    result = await documenter.research("GraphQL")
+async def test_research_updates_new_content_log(documenter, wiki_root):
+    await documenter.research("GraphQL")
 
-    assert "page" in result
-    assert "action" in result
-    assert "path" in result
-    assert result["path"].endswith("graphql.md")
+    log_file = wiki_root / "new-content.md"
+    assert log_file.exists()
+    assert "graphql" in log_file.read_text()
