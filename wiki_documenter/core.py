@@ -61,6 +61,39 @@ class WikiDocumenter:
 
         return {"pages": pages, "raw": raw_slug, "source_title": title, "source_url": url}
 
+    async def document_with_content(self, url: str, title: str, content: str) -> dict:
+        """Same as document() but with pre-fetched content — skips the HTTP fetch."""
+        raw_slug = _slugify(title)
+        self.storage.save_raw(raw_slug, content)
+
+        topics = await self._identify_topics(title, content)
+
+        pages = []
+        for topic in topics:
+            existing = self.storage.read_page(topic["slug"])
+            prompt = _build_topic_page_prompt(
+                topic_title=topic["title"],
+                topic_slug=topic["slug"],
+                topic_type=topic["type"],
+                article_title=title,
+                article_url=url,
+                article_content=content,
+                existing=existing,
+            )
+            wiki_markdown = await self.llm_fn(prompt)
+            path = self.storage.write_page(topic["slug"], wiki_markdown)
+            action = "enhanced" if existing else "created"
+            pages.append({
+                "page": topic["slug"],
+                "title": topic["title"],
+                "type": topic["type"],
+                "action": action,
+                "path": str(path),
+            })
+
+        self.storage.append_new_content(title, url, pages)
+        return {"pages": pages, "raw": raw_slug, "source_title": title, "source_url": url}
+
     async def research(self, topic: str) -> dict:
         """Research a topic using LLM search grounding and write/enhance a wiki page."""
         slug = _slugify(topic)
