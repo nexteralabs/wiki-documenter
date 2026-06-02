@@ -121,8 +121,10 @@ class WikiStorage:
         today = date.today().isoformat()
         lines = []
         for p in pages:
-            page_link = f"[[wiki/{p['page']}|{p['title']}]]"
-            source_link = f"[{source_title}]({source_url})"
+            # Use filename only — Obsidian resolves wikilinks by filename across the vault
+            filename = p["page"].split("/")[-1]
+            page_link = f"[[{filename}|{p['title']}]]"
+            source_link = f"[{source_title}]({source_url})" if source_url else source_title
             lines.append(f"| {today} | {page_link} | {p['action']} | {source_link} |\n")
 
         with open(log_path, "a", encoding="utf-8") as f:
