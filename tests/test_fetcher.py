@@ -73,3 +73,43 @@ async def test_no_fallback_without_profile_raises_fetch_error(fetcher, tmp_path)
         with pytest.raises(FetchError) as exc_info:
             await fetcher.fetch("https://example.com/article")
         assert "playwright" in str(exc_info.value).lower() or "profile" in str(exc_info.value).lower()
+
+@pytest.mark.asyncio
+async def test_fetch_sends_browser_user_agent(fetcher):
+    """Real-world regression: VentureBeat answers the bot User-Agent
+    'compatible; WikiDocumenter/1.0' with 403/429 but serves the article to a
+    normal browser User-Agent."""
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.text = "<html><body><p>ok</p></body></html>"
+
+    with patch("httpx.AsyncClient") as mock_client_cls:
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.get = AsyncMock(return_value=mock_response)
+        mock_client_cls.return_value = mock_client
+
+        await fetcher.fetch("https://venturebeat.com/article")
+        headers = mock_client.get.call_args.kwargs["headers"]
+        assert "WikiDocumenter" not in headers["User-Agent"]
+        assert "Chrome/" in headers["User-Agent"]
+        assert "text/html" in headers["Accept"]
+
+@pytest.mark.asyncio
+async def test_429_falls_back_like_403(fetcher, tmp_path):
+    mock_response = MagicMock()
+    mock_response.status_code = 429
+    mock_response.text = "Too Many Requests"
+
+    with patch("httpx.AsyncClient") as mock_client_cls, \
+         patch.object(fetcher, "PROFILE_DIR", tmp_path):
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.get = AsyncMock(return_value=mock_response)
+        mock_client_cls.return_value = mock_client
+
+        with pytest.raises(FetchError) as exc_info:
+            await fetcher.fetch("https://example.com/article")
+        assert "HTTP 429" in str(exc_info.value)
